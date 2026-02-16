@@ -3,14 +3,19 @@
   "name": "visatk-temp-mail",
   "main": "worker/index.ts",
   "compatibility_date": "2026-02-16",
-  "compatibility_flags": ["nodejs_compat"], // Required for postal-mime
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "observability": {
     "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
   },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "temp-mail-db",
+      "database_name": "temp-mail",
       "database_id": "YOUR_GENERATED_DATABASE_ID" // Paste ID here
     }
   ]
