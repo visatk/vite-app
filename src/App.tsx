@@ -1,7 +1,7 @@
-import { ComponentExample } from "@/components/component-example";
+import { PdfEditor } from "@/components/pdf-editor";
 
-export function App() {
-return <ComponentExample />;
+function App() {
+  return <PdfEditor />;
 }
 
 export default App;
