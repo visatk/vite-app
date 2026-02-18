@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { 
   Loader2, Save, Type, Upload, Highlighter, 
@@ -9,13 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Card } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/alert-dialog"; // Re-using alert-dialog primitive or standard dialog if avail
 import { modifyPdf, type PdfAnnotation } from "@/lib/pdf-utils";
 
 // Configure PDF.js worker
@@ -26,12 +19,10 @@ const API_BASE = import.meta.env.PROD ? "/api" : "http://localhost:8787/api";
 
 export function PdfEditor() {
   const [file, setFile] = useState<File | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
   
   // View State
   const [scale, setScale] = useState(1.0);
-  const [containerWidth, setContainerWidth] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Tools State
@@ -43,17 +34,6 @@ export function PdfEditor() {
   const [isInputOpen, setIsInputOpen] = useState(false);
   const [tempTextData, setTempTextData] = useState<{x: number, y: number, page: number} | null>(null);
   const [textInputValue, setTextInputValue] = useState("");
-
-  // Resize Observer for Responsive PDF
-  useEffect(() => {
-    const observer = new ResizeObserver((entries) => {
-      if (entries[0]) {
-        setContainerWidth(entries[0].contentRect.width);
-      }
-    });
-    if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
 
   // 1. Handle File Upload
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,12 +47,11 @@ export function PdfEditor() {
       formData.append("file", selectedFile);
 
       try {
-        const res = await fetch(`${API_BASE}/session/upload`, {
+        await fetch(`${API_BASE}/session/upload`, {
           method: "POST",
           body: formData,
         });
-        const data = await res.json() as { id: string };
-        setSessionId(data.id);
+        // Session ID returned here if needed in future: const data = await res.json();
       } catch (err) {
         console.error("Upload failed", err);
       }
@@ -84,90 +63,12 @@ export function PdfEditor() {
     if (tool === "none") return;
 
     const rect = e.currentTarget.getBoundingClientRect();
-    // Calculate unscaled coordinates (relative to the PDF's natural size at 100% scale)
-    // We assume the rendered width is containerWidth (if fit width) * scale
-    // But react-pdf renders based on 'width' prop. 
-    // The scale factor between rendered pixels and PDF points is handled here.
-    
-    // Determine the actual scale the PDF is currently rendered at relative to CSS pixels
-    // If we pass `scale` to Page, it scales the PDF. 
-    // However, we are likely using `width={containerWidth}` which overrides `scale` for fitting,
-    // OR we use `scale` explicitly. 
-    // Strategy: We will use `width={containerWidth}` and apply a zoom multiplier manually if needed, 
-    // but typically for responsive mobile, `width={containerWidth}` is best.
-    
-    // To support Zoom AND Responsive, strictly:
-    // We will calculate coordinates as percentages or normalized 1.0 scale values.
-    
-    // Simplification: We treat the click coordinate relative to the *current rendered size* // and store it. When saving, we need to know the PDF's true dimensions, 
-    // but our `modifyPdf` takes raw x/y. 
-    // We will store coordinates relative to the *rendered* element and then 
-    // devide by the current scale factor when saving? 
-    // NO. Best practice: Store normalized (0-1) or store relative to a fixed scale (1.0).
-    
-    // Let's rely on the fact that we render the Page at `scale={scale}` (if we use scale prop)
-    // or `width={containerWidth}`.
-    // Let's assume we render using `scale={scale}` for zoom, but limited by container?
-    // Actually, for mobile responsiveness, `width={containerWidth}` is king.
-    // If we zoom, we just increase the width passed to Page?
-    
-    // Let's go with: width = containerWidth * zoomLevel
-    const currentRenderedWidth = containerRef.current?.getBoundingClientRect().width || 600;
-    // Note: rect.width should be the actual width of the page element clicked
-    const scaleFactor = rect.width; 
-    
-    // Normalized coordinates (0 to 1)
-    const normX = (e.clientX - rect.left) / rect.width;
-    const normY = (e.clientY - rect.top) / rect.height;
-
-    // We need to convert these back to PDF Point coordinates (72 DPI usually) 
-    // inside `modifyPdf`. But we don't know the PDF's internal point size here easily 
-    // without loading the PDF structure.
-    // Workaround: We will store the *visual* offset relative to a standard 1.0 scale
-    // assuming the viewer matches the PDF point size at scale 1.0.
-    // Ideally, we pass the raw click relative to the scale 1.0.
-    // If react-pdf Page `scale={1}` renders at PDF point size, then:
-    // real_x = (e.clientX - rect.left) / current_scale
-    
-    // But we are using `width` to force size.
-    // We will store percentage based annotations for robust rendering across resizes in the editor,
-    // and calculating exact positions for the saver is tricky without page metadata.
-    
-    // COMPROMISE for this iteration:
-    // We will assume standard letter width (approx 600pt) for calculation if unknown, 
-    // OR better: Just use the visual pixel coordinates relative to the current view 
-    // and rely on the user not resizing the window aggressively between edits.
-    // To fix properly: We simply store the click X/Y divided by the *current visual scale*.
-    // Since we don't know the exact PDF point scale vs CSS pixel scale easily:
-    // We will use a fixed Reference Scale.
-    
-    // Let's use the `pdf-lib` standard: 
-    // We will save X/Y based on the rendered element's size divided by the rendered scale ratio.
-    // Actually, react-pdf provides `onLoadSuccess` for the PAGE giving us `originalWidth`.
-    
-    // We will just store normalized (0-1) coordinates in the UI state, 
-    // and convert to absolute coordinates inside `modifyPdf` or just before saving?
-    // `modifyPdf` needs absolute.
-    // Let's keep it simple: The logic in the previous file was:
-    // x = (clientX - left) / scale. 
-    // This assumes `scale` prop was used.
-    
-    // We will return to using `scale` prop for the Viewer to keep coordinates consistent.
-    // Mobile responsiveness will be achieved by calculating the `scale` 
-    // that fits the `containerWidth`.
     
     // 1. Calculate the click position relative to the element (CSS pixels)
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     
     // 2. Adjust for the current scale of the viewer
-    // If we use the "Fit Width" strategy, we need to know the effective scale.
-    // Effective Scale = rect.width / original_page_width (which we don't have easily per page).
-    
-    // Let's stick to the previous simple logic but make it robust:
-    // We will render the PDF at a specific `scale` state. 
-    // We will initialize `scale` such that it fits the container.
-    
     const pdfX = clickX / scale;
     const pdfY = clickY / scale;
 
@@ -221,6 +122,7 @@ export function PdfEditor() {
     setIsSaving(true);
     try {
       const pdfBytes = await modifyPdf(file, annotations);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const blob = new Blob([pdfBytes as any], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -352,10 +254,6 @@ export function PdfEditor() {
                     <Page 
                       pageNumber={index + 1} 
                       scale={scale} 
-                      // If container is smaller than scaled PDF, let it scroll. 
-                      // If container is larger, we center it.
-                      // Responsive fix: If scale is 1.0 but screen is tiny, reduce scale?
-                      // Better: Let user control scale, but init at a fit width.
                       renderTextLayer={false} 
                       renderAnnotationLayer={false}
                       className="max-w-full"
