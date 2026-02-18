@@ -1,24 +1,21 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, PDFFont } from "pdf-lib";
 
 export interface PdfAnnotation {
   id: string;
-  type: "text" | "rect" | "image" | "path";
+  type: "text" | "rect" | "image" | "path" | "text-replace";
   page: number; // 1-based index
   x: number;
   y: number;
-  // Text specific
   text?: string;
   fontSize?: number;
-  // Rect/Image specific
   width?: number;
   height?: number;
-  // Image specific
-  image?: string; // Base64 data
-  // Path specific
-  path?: string; // SVG Path data (d attribute)
+  image?: string; 
+  path?: string; 
   strokeWidth?: number;
-  // Shared
   color?: string;
+  // Specific for text-replace
+  originalTextRect?: { x: number; y: number; width: number; height: number };
 }
 
 export async function modifyPdf(
@@ -29,25 +26,48 @@ export async function modifyPdf(
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer);
   const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   
-  // 1. Apply Annotations
   const pages = pdfDoc.getPages();
   
+  // Parse color helper
+  const parseColor = (hex: string) => {
+      const r = parseInt(hex.slice(1, 3), 16) / 255;
+      const g = parseInt(hex.slice(3, 5), 16) / 255;
+      const b = parseInt(hex.slice(5, 7), 16) / 255;
+      return rgb(isNaN(r) ? 0 : r, isNaN(g) ? 0 : g, isNaN(b) ? 0 : b);
+  }
+
   for (const ann of annotations) {
-    // Skip if page was deleted or invalid
     if (ann.page > pages.length || deletedPageIndices.includes(ann.page - 1)) continue;
     
     const page = pages[ann.page - 1];
     const { height } = page.getSize();
 
-    // Color helper
-    const parseColor = (hex: string) => {
-        const r = parseInt(hex.slice(1, 3), 16) / 255;
-        const g = parseInt(hex.slice(3, 5), 16) / 255;
-        const b = parseInt(hex.slice(5, 7), 16) / 255;
-        return rgb(isNaN(r) ? 0 : r, isNaN(g) ? 0 : g, isNaN(b) ? 0 : b);
+    if (ann.type === "text-replace" && ann.originalTextRect && ann.text) {
+        // 1. Redact original text (White rectangle)
+        // PDF-lib coordinates are bottom-left. We must flip the Y.
+        // The rect comes in as PDF coordinates (already flipped by frontend)
+        page.drawRectangle({
+            x: ann.originalTextRect.x,
+            y: ann.originalTextRect.y, // Expecting PDF coords from frontend
+            width: ann.originalTextRect.width,
+            height: ann.originalTextRect.height,
+            color: rgb(1, 1, 1), // White mask
+        });
+
+        // 2. Draw new text
+        page.drawText(ann.text, {
+            x: ann.x,
+            y: ann.y, // Expecting PDF coords
+            size: ann.fontSize || 12,
+            font: helveticaFont, // Defaulting to Helvetica for stability
+            color: parseColor(ann.color || "#000000"),
+        });
+        continue;
     }
 
+    // ... [Existing Logic for other types remains the same] ...
     if (ann.type === "text" && ann.text) {
       page.drawText(ann.text, {
         x: ann.x,
@@ -72,7 +92,6 @@ export async function modifyPdf(
     if (ann.type === "image" && ann.image && ann.width && ann.height) {
         try {
             const imgBytes = Uint8Array.from(atob(ann.image.split(',')[1]), c => c.charCodeAt(0));
-            // Detect type roughly or try both
             const isPng = ann.image.startsWith("data:image/png");
             const embeddedImage = isPng 
                 ? await pdfDoc.embedPng(imgBytes) 
@@ -97,7 +116,7 @@ export async function modifyPdf(
     }
   }
 
-  // 2. Handle Page Deletion (Reverse order to maintain indices)
+  // Handle Page Deletion
   const sortedDeletions = [...deletedPageIndices].sort((a, b) => b - a);
   for (const idx of sortedDeletions) {
       if (idx < pdfDoc.getPageCount()) {
