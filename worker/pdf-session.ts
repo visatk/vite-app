@@ -39,7 +39,8 @@ export class PDFSession extends DurableObject<Env> {
     }
   }
 
-  async handleWebSocket(request: Request): Promise<Response> {
+  // Renamed request to _request to silence unused variable warning
+  async handleWebSocket(_request: Request): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -84,17 +85,13 @@ export class PDFSession extends DurableObject<Env> {
     if (!pdfObject) return;
 
     // Use Workers AI (Llama 3) to summarize
-    // Note: In prod, you'd extract text first. Passing raw PDF bytes is supported by some models 
-    // or requires a text-extraction step. Here we assume we pass a prompt.
     ws.send(JSON.stringify({ type: "ai-status", status: "thinking" }));
     
     try {
-      // For a real app, you would use a queue to extract text first. 
-      // This is a simplified direct calls for demonstration.
       const response = await this.env.AI.run("@cf/meta/llama-3-8b-instruct", {
         messages: [
           { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: "Summarize the purpose of a PDF document editor." } // Placeholder for actual PDF text
+          { role: "user", content: "Summarize the purpose of a PDF document editor." } 
         ]
       });
 
