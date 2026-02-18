@@ -53,7 +53,7 @@ export class PDFSession extends DurableObject<Env> {
 		}
 	}
 
-	async handleWebSocket(request: Request): Promise<Response> {
+	async handleWebSocket(_request: Request): Promise<Response> {
 		const pair = new WebSocketPair();
 		const [client, server] = Object.values(pair);
 
